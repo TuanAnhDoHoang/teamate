@@ -20,7 +20,7 @@ class UploadProjectItemRequest extends FormRequest
 
         return $project instanceof Project
             && $user instanceof User
-            && $project->canUserEdit($user);
+            && $project->memberships()->where('user_id', $user->id)->exists();
     }
 
     /**
@@ -43,6 +43,7 @@ class UploadProjectItemRequest extends FormRequest
                     ->where('kind', 'folder'),
             ],
             'relative_path' => ['nullable', 'string', 'max:1000'],
+            'malware_confirmation' => ['nullable', 'string', 'max:8192'],
         ];
     }
 

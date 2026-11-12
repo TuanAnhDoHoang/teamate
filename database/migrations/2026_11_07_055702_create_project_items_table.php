@@ -4,7 +4,8 @@ use Illuminate\Database\Migrations\Migration;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\Schema;
 
-return new class extends Migration {
+return new class extends Migration
+{
     public function up(): void
     {
         Schema::create('project_items', function (Blueprint $table) {
@@ -47,10 +48,20 @@ return new class extends Migration {
                 'pending',
                 'clean',
                 'quarantined',
-                'failed'
+                'failed',
+                'malware',
             ])->nullable();
 
             $table->timestamp('scanned_at')->nullable();
+
+            $table->text('malware_signature')->nullable();
+
+            $table->foreignId('malware_acknowledged_by')
+                ->nullable()
+                ->constrained('users')
+                ->nullOnDelete();
+
+            $table->timestamp('malware_acknowledged_at')->nullable();
 
             // User tracking
             $table->foreignId('created_by')

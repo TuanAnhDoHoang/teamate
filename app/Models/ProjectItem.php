@@ -28,6 +28,9 @@ class ProjectItem extends Model
         'encryption_key_version',
         'scan_status',
         'scanned_at',
+        'malware_signature',
+        'malware_acknowledged_by',
+        'malware_acknowledged_at',
         'created_by',
         'updated_by',
     ];
@@ -36,6 +39,7 @@ class ProjectItem extends Model
     {
         return [
             'scanned_at' => 'datetime',
+            'malware_acknowledged_at' => 'datetime',
             'size_bytes' => 'integer',
         ];
     }
@@ -63,6 +67,11 @@ class ProjectItem extends Model
     public function updater(): BelongsTo
     {
         return $this->belongsTo(User::class, 'updated_by');
+    }
+
+    public function malwareAcknowledgingUser(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'malware_acknowledged_by');
     }
 
     public function isFolder(): bool

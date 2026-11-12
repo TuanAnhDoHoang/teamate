@@ -98,6 +98,33 @@ Tương tự như các phần trên thì ta có luồng hoạt động:
 
 → Ta đã có Peter với role Project_A_Developer được quyền đọc và chỉnh sửa Thư mục .github, thư mục frontend và file docker-compose.yml trong dự án của nhóm mà anh ta tham gia
 
+## Chạy ứng dụng bằng Docker Compose
+
+Khởi chạy ứng dụng và MySQL:
+
+```bash
+docker compose up -d --build
+```
+
+Compose cũng khởi chạy Vault Transit và tự tạo khóa `teamate-files` để mã hóa nội dung file mới tải lên. File được mã hóa trước khi lưu; Vault giữ khóa mã hóa và ứng dụng cần Vault để tải xuống hoặc xem trước. Tên file/folder và metadata vẫn được lưu rõ trong database. Vault dev mode cùng root token mẫu chỉ dùng cho phát triển: dữ liệu và khóa Vault không bền vững qua lần tạo lại container, vì vậy không dùng cấu hình này cho production.
+
+Compose cũng chạy ClamAV trong mạng nội bộ, không mở cổng scanner ra máy host. File được quét trước khi mã hóa; nếu phát hiện malware, người tải lên có thể hủy hoặc xác nhận tiếp tục. File được chấp nhận sẽ vẫn được mã hóa và gắn cảnh báo kèm tên signature để thành viên khác nhìn thấy. Nếu ClamAV không sẵn sàng hoặc không thể hoàn tất việc quét, upload bị từ chối. Database signature được cập nhật tự động và lưu trong volume `clamav-data`.
+
+Các biến cấu hình tùy chọn là `CLAMAV_HOST`, `CLAMAV_PORT` và `CLAMAV_TIMEOUT` (mặc định lần lượt là `clamav`, `3310` và `60` giây). Giới hạn upload là 50 MB; ClamAV được cấu hình giới hạn INSTREAM cao hơn để nhận đủ file ở ngưỡng tối đa.
+
+Chạy database migrations và seed dữ liệu ban đầu:
+
+```bash
+docker compose exec app php artisan migrate --seed
+```
+
+Auto-Approved Email trong môi trường docker
+```bash
+docker compose exec -e XDG_CONFIG_HOME=/tmp app php artisan tinker --execute 'User::latest()->first()->markEmailAsVerified();'
+```
+
+Sau đó truy cập ứng dụng tại [http://localhost:8000](http://localhost:8000).
+
 Kịch bản:  Pentester thuê ngoài làm việc 7 ngày
 
 - TeamAdministrator add vào nhóm

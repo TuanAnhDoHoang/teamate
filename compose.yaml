@@ -1,0 +1,97 @@
+services:
+  app:
+    build:
+      context: .
+    environment:
+      APP_ENV: ${APP_ENV:-local}
+      APP_DEBUG: ${APP_DEBUG:-true}
+      APP_KEY: ${APP_KEY:-}
+      APP_URL: ${APP_URL:-http://localhost:8000}
+      DB_CONNECTION: mysql
+      DB_HOST: mysql
+      DB_PORT: 3306
+      DB_DATABASE: ${MYSQL_DATABASE:-teamate}
+      DB_USERNAME: ${MYSQL_USER:-teamate}
+      DB_PASSWORD: ${MYSQL_PASSWORD:-teamate}
+      VAULT_ADDR: ${VAULT_ADDR:-http://vault:8200}
+      VAULT_TOKEN: ${VAULT_TOKEN:-local-dev-root-token}
+      VAULT_TRANSIT_KEY: ${VAULT_TRANSIT_KEY:-teamate-files}
+      VAULT_TIMEOUT: ${VAULT_TIMEOUT:-5}
+      CLAMAV_HOST: ${CLAMAV_HOST:-clamav}
+      CLAMAV_PORT: ${CLAMAV_PORT:-3310}
+      CLAMAV_TIMEOUT: ${CLAMAV_TIMEOUT:-60}
+    ports:
+      - "${APP_PORT:-8000}:8000"
+    depends_on:
+      mysql:
+        condition: service_healthy
+      vault-init:
+        condition: service_completed_successfully
+      clamav:
+        condition: service_healthy
+
+  clamav:
+    image: clamav/clamav:1.4
+    environment:
+     #CLAMD_CONF_TCPAddr: 0.0.0.0
+      CLAMD_CONF_StreamMaxLength: 60M
+      CLAMD_CONF_MaxFileSize: 60M
+      CLAMD_CONF_MaxScanSize: 100M
+    volumes:
+      - clamav-data:/var/lib/clamav
+    healthcheck:
+      test: ["CMD", "clamdcheck.sh"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 6m
+
+  vault:
+    image: hashicorp/vault:1.20
+    command: ["server", "-dev"]
+    environment:
+      VAULT_DEV_LISTEN_ADDRESS: 0.0.0.0:8200
+      VAULT_DEV_ROOT_TOKEN_ID: ${VAULT_DEV_ROOT_TOKEN_ID:-local-dev-root-token}
+    ports:
+      - "127.0.0.1:${VAULT_PORT:-8200}:8200"
+    healthcheck:
+      test: ["CMD", "vault", "status", "-address=http://127.0.0.1:8200"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  vault-init:
+    image: hashicorp/vault:1.20
+    environment:
+      VAULT_ADDR: http://vault:8200
+      VAULT_TOKEN: ${VAULT_TOKEN:-local-dev-root-token}
+      VAULT_TRANSIT_KEY: ${VAULT_TRANSIT_KEY:-teamate-files}
+    depends_on:
+      vault:
+        condition: service_healthy
+    entrypoint: ["sh", "-ec"]
+    command:
+      - |
+        vault secrets list -format=json | grep -q '"transit/"' || vault secrets enable -path=transit transit
+        vault read "transit/keys/$${VAULT_TRANSIT_KEY}" >/dev/null 2>&1 || vault write -f "transit/keys/$${VAULT_TRANSIT_KEY}"
+
+  mysql:
+    image: mysql:8.4
+    environment:
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-teamate}
+      MYSQL_USER: ${MYSQL_USER:-teamate}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-teamate}
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-teamate-root}
+    ports:
+      - "${MYSQL_PORT:-3306}:3306"
+    volumes:
+      - mysql-data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping --host=localhost --user=root --password=$$MYSQL_ROOT_PASSWORD --silent"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  mysql-data:
+  clamav-data:

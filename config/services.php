@@ -35,4 +35,17 @@ return [
         ],
     ],
 
+    'vault' => [
+        'address' => env('VAULT_ADDR', 'http://vault:8200'),
+        'token' => env('VAULT_TOKEN'),
+        'transit_key' => env('VAULT_TRANSIT_KEY', 'teamate-files'),
+        'timeout' => env('VAULT_TIMEOUT', 5),
+    ],
+
+    'clamav' => [
+        'host' => env('CLAMAV_HOST', 'clamav'),
+        'port' => env('CLAMAV_PORT', 3310),
+        'timeout' => env('CLAMAV_TIMEOUT', 60),
+    ],
+
 ];

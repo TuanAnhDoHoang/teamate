@@ -1,5 +1,6 @@
 <?php
 
+use App\Exceptions\ClamAvScanException;
 use App\Models\Membership;
 use App\Models\Project;
 use App\Models\ProjectItem;
@@ -10,8 +11,12 @@ use App\Models\Roles;
 use App\Models\Team;
 use App\Models\TeamMember;
 use App\Models\User;
+use App\Services\ClamAvScanner;
+use App\Services\VaultFileEncryption;
+use Illuminate\Http\Client\Factory;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Storage;
 
 /**
@@ -82,6 +87,124 @@ function createProjectReadFixture(?int $teamPermissionMask, ?int $projectPermiss
 
     return compact('team', 'project', 'member');
 }
+
+function configureTeamProjectWorkflowVault(): void
+{
+    config([
+        'services.vault.address' => 'http://vault.test',
+        'services.vault.token' => 'test-vault-token',
+        'services.vault.transit_key' => 'teamate-files',
+    ]);
+
+    Http::preventStrayRequests();
+    Http::fake([
+        'http://vault.test/v1/transit/datakey/plaintext/teamate-files' => Http::response([
+            'data' => [
+                'plaintext' => base64_encode(str_repeat('k', 32)),
+                'ciphertext' => 'vault:v1:d3JhcHBlZC1kYXRhLWtleQ==',
+            ],
+        ]),
+        'http://vault.test/v1/transit/decrypt/teamate-files' => Http::response([
+            'data' => [
+                'plaintext' => base64_encode(str_repeat('k', 32)),
+            ],
+        ]),
+    ]);
+}
+
+function fakeProjectClamAvScan(?string $signature = null, int $calls = 1): void
+{
+    $scanner = Mockery::mock(ClamAvScanner::class);
+    $scanner->shouldReceive('scan')
+        ->times($calls)
+        ->andReturn($signature);
+
+    app()->instance(ClamAvScanner::class, $scanner);
+}
+
+function storeEncryptedTeamProjectTestFile(ProjectItem $item, string $contents): void
+{
+    $plaintextPath = tempnam(sys_get_temp_dir(), 'teamate-test-plaintext-');
+    $encryptedPath = tempnam(sys_get_temp_dir(), 'teamate-test-encrypted-');
+
+    if ($plaintextPath === false || $encryptedPath === false) {
+        throw new RuntimeException('Unable to create temporary files for a test.');
+    }
+
+    try {
+        file_put_contents($plaintextPath, $contents);
+        $metadata = app(VaultFileEncryption::class)->encryptFile($plaintextPath, $encryptedPath);
+        $storageRef = "projects/{$item->project_id}/{$item->id}.enc";
+        $stream = fopen($encryptedPath, 'rb');
+
+        if (! is_resource($stream)) {
+            throw new RuntimeException('Unable to open the encrypted test file.');
+        }
+
+        try {
+            Storage::disk('local')->put($storageRef, $stream);
+        } finally {
+            fclose($stream);
+        }
+
+        $item->update([
+            'storage_backend' => 'local',
+            'storage_ref' => $storageRef,
+            'encryption_key_ref' => $metadata['key_ref'],
+            'encryption_key_version' => $metadata['key_version'],
+            'size_bytes' => strlen($contents),
+            'checksum_sha256' => hash_file('sha256', $encryptedPath),
+        ]);
+    } finally {
+        if (is_file($plaintextPath)) {
+            unlink($plaintextPath);
+        }
+
+        if (is_file($encryptedPath)) {
+            unlink($encryptedPath);
+        }
+    }
+}
+
+test('user can have team and project memberships with the same scope id', function () {
+    $user = User::factory()->create();
+    $teamRole = Roles::create([
+        'code' => 'team_same_scope_'.$user->id,
+        'name' => 'Team Member',
+        'scope_type' => 'team',
+        'is_system' => false,
+    ]);
+    $projectRole = Roles::create([
+        'code' => 'project_same_scope_'.$user->id,
+        'name' => 'Project Member',
+        'scope_type' => 'project',
+        'is_system' => false,
+    ]);
+
+    $teamMembership = Membership::create([
+        'user_id' => $user->id,
+        'role_id' => $teamRole->id,
+        'scope_id' => 1,
+    ]);
+    $projectMembership = Membership::create([
+        'user_id' => $user->id,
+        'role_id' => $projectRole->id,
+        'scope_id' => 1,
+    ]);
+
+    $this->assertDatabaseHas('memberships', [
+        'id' => $teamMembership->id,
+        'user_id' => $user->id,
+        'scope_type' => 'team',
+        'scope_id' => 1,
+    ]);
+    $this->assertDatabaseHas('memberships', [
+        'id' => $projectMembership->id,
+        'user_id' => $user->id,
+        'scope_type' => 'project',
+        'scope_id' => 1,
+    ]);
+});
 
 function createProjectItemWithGrant(Project $project, User $user, string $kind, int $permissionMask, string $name): ProjectItem
 {
@@ -508,6 +631,8 @@ test('team member without write permission cannot add a member', function () {
 
 test('project page renders empty drop zone, allows upload and folder creation', function () {
     Storage::fake('local');
+    configureTeamProjectWorkflowVault();
+    fakeProjectClamAvScan(calls: 3);
     $owner = User::factory()->create();
 
     $team = Team::create(['name' => 'DevOps', 'slug' => 'devops', 'owner_id' => $owner->id]);
@@ -598,6 +723,11 @@ test('project page renders empty drop zone, allows upload and folder creation', 
     expect($uploadedItem)->not->toBeNull();
     expect($uploadedItem->isFile())->toBeTrue();
     expect($uploadedItem->parent_id)->toBe($folder->id);
+    expect($uploadedItem->encryption_key_ref)->toBe('teamate-files');
+    expect($uploadedItem->encryption_key_version)->toBe('1');
+    expect($uploadedItem->scan_status)->toBe('clean');
+    expect($uploadedItem->malware_signature)->toBeNull();
+    expect(Storage::disk('local')->get($uploadedItem->storage_ref))->toStartWith("TEAMATE-ENCRYPTED-FILE-1\n");
     $fileResourceType = ResourceTypes::where('code', 'file')->firstOrFail();
     $this->assertDatabaseHas('resource_grants', [
         'role_id' => $projectMembership->role_id,
@@ -626,7 +756,33 @@ test('project page renders empty drop zone, allows upload and folder creation', 
 
     // Download file
     $downloadResponse = $this->actingAs($owner)->get(route('projects.items.download', [$team, $project, $uploadedItem]));
-    $downloadResponse->assertOk();
+    $downloadResponse->assertOk()->assertDownload('kernel.rs');
+
+    $encryptedFilesBeforeVaultFailure = Storage::disk('local')->allFiles("projects/{$project->id}");
+    Http::swap(new Factory);
+    Http::preventStrayRequests();
+    Http::fake([
+        'http://vault.test/v1/transit/datakey/plaintext/teamate-files' => Http::response([], 503),
+    ]);
+
+    $failedUpload = $this->actingAs($owner)->postJson(route('projects.upload', [$team, $project]), [
+        'file' => UploadedFile::fake()->create('vault-failure.txt', 10, 'text/plain'),
+        'relative_path' => 'vault-failure/new-folder/vault-failure.txt',
+    ]);
+
+    $failedUpload->assertStatus(503)->assertJson([
+        'message' => 'The file encryption service is unavailable. Please try again later.',
+    ]);
+    $this->assertDatabaseMissing('project_items', [
+        'project_id' => $project->id,
+        'name' => 'vault-failure.txt',
+    ]);
+    $this->assertDatabaseMissing('project_items', [
+        'project_id' => $project->id,
+        'name' => 'vault-failure',
+    ]);
+    expect(Storage::disk('local')->allFiles("projects/{$project->id}"))
+        ->toBe($encryptedFilesBeforeVaultFailure);
 });
 
 test('team member with read permission on the team and project can view the project', function () {
@@ -638,6 +794,34 @@ test('team member with read permission on the team and project can view the proj
     $response = $this->actingAs($member)->get(route('projects.show', [$team, $project]));
 
     $response->assertOk();
+});
+
+test('project page hides items without read permission and refuses unreadable folders', function () {
+    ['team' => $team, 'project' => $project, 'member' => $member] = createProjectReadFixture(
+        ResourceGrants::READ,
+        ResourceGrants::READ,
+    );
+    $readableFile = createProjectItemWithGrant($project, $member, 'file', ResourceGrants::READ, 'readable.txt');
+    $writeOnlyFile = createProjectItemWithGrant($project, $member, 'file', ResourceGrants::WRITE, 'write-only.txt');
+    $unreadableFile = createProjectItemWithGrant($project, $member, 'file', ResourceGrants::OWN, 'unreadable.txt');
+    $readableFolder = createProjectItemWithGrant($project, $member, 'folder', ResourceGrants::READ, 'readable-folder');
+    $unreadableFolder = createProjectItemWithGrant($project, $member, 'folder', ResourceGrants::OWN, 'unreadable-folder');
+    $readableFile->update(['mime_type' => 'text/plain']);
+
+    $response = $this->actingAs($member)->get(route('projects.show', [$team, $project]));
+
+    $response->assertOk()
+        ->assertSee($readableFile->name)
+        ->assertSee(route('projects.items.preview', [$team, $project, $readableFile]))
+        ->assertSee(route('projects.items.download', [$team, $project, $readableFolder]))
+        ->assertSee($writeOnlyFile->name)
+        ->assertDontSee($unreadableFile->name)
+        ->assertDontSee($unreadableFolder->name);
+    $response->assertDontSee(route('projects.items.download', [$team, $project, $writeOnlyFile]));
+
+    $this->actingAs($member)
+        ->get(route('projects.show', [$team, $project]).'?folder='.$unreadableFolder->id)
+        ->assertForbidden();
 });
 
 test('team member without project read permission cannot view the project', function () {
@@ -719,6 +903,155 @@ test('project member without write permission on the parent folder cannot upload
     Storage::disk('local')->assertDirectoryEmpty("projects/{$project->id}");
 });
 
+test('project member with folder write permission can upload into that folder without project write permission', function () {
+    Storage::fake('local');
+    configureTeamProjectWorkflowVault();
+    fakeProjectClamAvScan();
+    ['team' => $team, 'project' => $project, 'member' => $member] = createProjectReadFixture(
+        ResourceGrants::READ,
+        ResourceGrants::READ,
+    );
+    $folder = createProjectItemWithGrant($project, $member, 'folder', ResourceGrants::WRITE, 'writable-folder');
+
+    $response = $this->actingAs($member)->postJson(route('projects.upload', [$team, $project]), [
+        'file' => UploadedFile::fake()->create('allowed.txt', 10, 'text/plain'),
+        'parent_id' => $folder->id,
+    ]);
+
+    $response->assertOk()->assertJson(['success' => true]);
+    $uploadedFile = ProjectItem::query()
+        ->where('project_id', $project->id)
+        ->where('parent_id', $folder->id)
+        ->where('name', 'allowed.txt')
+        ->firstOrFail();
+    expect($uploadedFile->isFile())->toBeTrue();
+    Storage::disk('local')->assertExists($uploadedFile->storage_ref);
+    expect($uploadedFile->encryption_key_ref)->toBe('teamate-files');
+});
+
+test('malware is stored only after the uploader confirms the unchanged file', function () {
+    Storage::fake('local');
+    configureTeamProjectWorkflowVault();
+    fakeProjectClamAvScan('Win.Test.EICAR', 2);
+    ['team' => $team, 'project' => $project, 'member' => $member] = createProjectReadFixture(
+        ResourceGrants::WRITE,
+        ResourceGrants::WRITE,
+    );
+    $fileContents = 'test malware fixture';
+    $uploadUrl = route('projects.upload', [$team, $project]);
+
+    $warningResponse = $this->actingAs($member)->postJson($uploadUrl, [
+        'file' => UploadedFile::fake()->createWithContent('eicar.txt', $fileContents),
+    ]);
+
+    $warningResponse->assertStatus(422)->assertJson([
+        'malware_detected' => true,
+        'signature' => 'Win.Test.EICAR',
+    ]);
+    $confirmationToken = $warningResponse->json('confirmation_token');
+    $this->assertDatabaseMissing('project_items', [
+        'project_id' => $project->id,
+        'name' => 'eicar.txt',
+    ]);
+    Storage::disk('local')->assertDirectoryEmpty("projects/{$project->id}");
+
+    $uploadResponse = $this->actingAs($member)->postJson($uploadUrl, [
+        'file' => UploadedFile::fake()->createWithContent('eicar.txt', $fileContents),
+        'malware_confirmation' => $confirmationToken,
+    ]);
+
+    $uploadResponse->assertOk()->assertJson(['success' => true]);
+    $item = ProjectItem::query()
+        ->where('project_id', $project->id)
+        ->where('name', 'eicar.txt')
+        ->firstOrFail();
+    expect($item->scan_status)->toBe('malware');
+    expect($item->malware_signature)->toBe('Win.Test.EICAR');
+    expect($item->malware_acknowledged_by)->toBe($member->id);
+    expect($item->malware_acknowledged_at)->not->toBeNull();
+    Storage::disk('local')->assertExists($item->storage_ref);
+
+    $this->actingAs($member)
+        ->get(route('projects.show', [$team, $project]))
+        ->assertOk()
+        ->assertSee('Malware detected: Win.Test.EICAR');
+});
+
+test('upload returns 422 when malware confirmation is reused for different content', function () {
+    Storage::fake('local');
+    configureTeamProjectWorkflowVault();
+    fakeProjectClamAvScan('Win.Test.EICAR');
+    ['team' => $team, 'project' => $project, 'member' => $member] = createProjectReadFixture(
+        ResourceGrants::WRITE,
+        ResourceGrants::WRITE,
+    );
+
+    $warningResponse = $this->actingAs($member)->postJson(route('projects.upload', [$team, $project]), [
+        'file' => UploadedFile::fake()->createWithContent('eicar.txt', 'first content'),
+    ]);
+    $confirmationToken = $warningResponse->json('confirmation_token');
+
+    $uploadResponse = $this->actingAs($member)->postJson(route('projects.upload', [$team, $project]), [
+        'file' => UploadedFile::fake()->createWithContent('eicar.txt', 'changed content'),
+        'malware_confirmation' => $confirmationToken,
+    ]);
+
+    $uploadResponse->assertStatus(422)->assertJson([
+        'message' => 'The malware confirmation is invalid or expired. Please upload the file again.',
+    ]);
+    $this->assertDatabaseMissing('project_items', [
+        'project_id' => $project->id,
+        'name' => 'eicar.txt',
+    ]);
+    Storage::disk('local')->assertDirectoryEmpty("projects/{$project->id}");
+});
+
+test('upload returns 503 without storing a file when ClamAV is unavailable', function () {
+    Storage::fake('local');
+    configureTeamProjectWorkflowVault();
+    $scanner = Mockery::mock(ClamAvScanner::class);
+    $scanner->shouldReceive('scan')
+        ->once()
+        ->andThrow(new ClamAvScanException('ClamAV is unavailable.'));
+    app()->instance(ClamAvScanner::class, $scanner);
+    ['team' => $team, 'project' => $project, 'member' => $member] = createProjectReadFixture(
+        ResourceGrants::WRITE,
+        ResourceGrants::WRITE,
+    );
+
+    $response = $this->actingAs($member)->postJson(route('projects.upload', [$team, $project]), [
+        'file' => UploadedFile::fake()->create('unscanned.txt', 10, 'text/plain'),
+    ]);
+
+    $response->assertStatus(503)->assertJson([
+        'message' => 'The virus scanning service is unavailable. The file was not uploaded. Please try again later.',
+    ]);
+    $this->assertDatabaseMissing('project_items', [
+        'project_id' => $project->id,
+        'name' => 'unscanned.txt',
+    ]);
+    Storage::disk('local')->assertDirectoryEmpty("projects/{$project->id}");
+});
+
+test('project member without folder write permission cannot create a child folder', function () {
+    ['team' => $team, 'project' => $project, 'member' => $member] = createProjectReadFixture(
+        ResourceGrants::READ,
+        ResourceGrants::WRITE,
+    );
+    $folder = createProjectItemWithGrant($project, $member, 'folder', ResourceGrants::READ, 'restricted');
+
+    $response = $this->actingAs($member)->post(route('projects.folders.store', [$team, $project]), [
+        'name' => 'new-child',
+        'parent_id' => $folder->id,
+    ]);
+
+    $response->assertForbidden();
+    $this->assertDatabaseMissing('project_items', [
+        'project_id' => $project->id,
+        'name' => 'new-child',
+    ]);
+});
+
 test('project member without file write permission cannot rename a file', function () {
     ['team' => $team, 'project' => $project, 'member' => $member] = createProjectReadFixture(
         ResourceGrants::READ,
@@ -781,7 +1114,7 @@ test('project member with item write permission can rename and delete items', fu
     $this->assertSoftDeleted('project_items', ['id' => $folder->id]);
 });
 
-test('project member without file read permission cannot download a file', function () {
+test('project member without file read permission cannot view or download a file', function () {
     Storage::fake('local');
     ['team' => $team, 'project' => $project, 'member' => $member] = createProjectReadFixture(
         ResourceGrants::READ,
@@ -794,15 +1127,20 @@ test('project member without file read permission cannot download a file', funct
     ]);
     Storage::disk('local')->put($file->storage_ref, 'secret contents');
 
-    $response = $this->actingAs($member)->get(
+    $previewResponse = $this->actingAs($member)->get(
+        route('projects.items.preview', [$team, $project, $file]),
+    );
+    $downloadResponse = $this->actingAs($member)->get(
         route('projects.items.download', [$team, $project, $file]),
     );
 
-    $response->assertForbidden();
+    $previewResponse->assertForbidden();
+    $downloadResponse->assertForbidden();
 });
 
 test('project member with file read permission can download a file', function () {
     Storage::fake('local');
+    configureTeamProjectWorkflowVault();
     ['team' => $team, 'project' => $project, 'member' => $member] = createProjectReadFixture(
         ResourceGrants::READ,
         ResourceGrants::READ,
@@ -812,7 +1150,7 @@ test('project member with file read permission can download a file', function ()
         'storage_backend' => 'local',
         'storage_ref' => 'projects/'.$project->id.'/readable.txt',
     ]);
-    Storage::disk('local')->put($file->storage_ref, 'file contents');
+    storeEncryptedTeamProjectTestFile($file, 'file contents');
 
     $response = $this->actingAs($member)->get(
         route('projects.items.download', [$team, $project, $file]),
@@ -820,4 +1158,102 @@ test('project member with file read permission can download a file', function ()
 
     $response->assertOk();
     $response->assertDownload('readable.txt');
+    expect($response->getFile()->getContent())->toBe('file contents');
+});
+
+test('project member with file read permission can preview a safe file inline', function () {
+    Storage::fake('local');
+    configureTeamProjectWorkflowVault();
+    ['team' => $team, 'project' => $project, 'member' => $member] = createProjectReadFixture(
+        ResourceGrants::READ,
+        ResourceGrants::READ,
+    );
+    $file = createProjectItemWithGrant($project, $member, 'file', ResourceGrants::READ, 'preview.txt');
+    $file->update([
+        'mime_type' => 'text/plain',
+        'storage_backend' => 'local',
+        'storage_ref' => 'projects/'.$project->id.'/preview.txt',
+    ]);
+    storeEncryptedTeamProjectTestFile($file, 'preview contents');
+
+    $response = $this->actingAs($member)->get(
+        route('projects.items.preview', [$team, $project, $file]),
+    );
+
+    $response->assertOk()
+        ->assertHeader('content-type', 'text/plain')
+        ->assertHeader('x-content-type-options', 'nosniff');
+    expect($response->getFile()->getContent())->toBe('preview contents');
+});
+
+test('project member cannot preview active file content inline', function () {
+    Storage::fake('local');
+    ['team' => $team, 'project' => $project, 'member' => $member] = createProjectReadFixture(
+        ResourceGrants::READ,
+        ResourceGrants::READ,
+    );
+    $file = createProjectItemWithGrant($project, $member, 'file', ResourceGrants::READ, 'unsafe.html');
+    $file->update([
+        'mime_type' => 'text/html',
+        'storage_backend' => 'local',
+        'storage_ref' => 'projects/'.$project->id.'/unsafe.html',
+    ]);
+    Storage::disk('local')->put($file->storage_ref, '<script>alert(1)</script>');
+
+    $response = $this->actingAs($member)->get(
+        route('projects.items.preview', [$team, $project, $file]),
+    );
+
+    $response->assertStatus(415);
+});
+
+test('project member with folder read permission can download a zip of readable descendants', function () {
+    Storage::fake('local');
+    configureTeamProjectWorkflowVault();
+    ['team' => $team, 'project' => $project, 'member' => $member] = createProjectReadFixture(
+        ResourceGrants::READ,
+        ResourceGrants::READ,
+    );
+    $folder = createProjectItemWithGrant($project, $member, 'folder', ResourceGrants::READ, 'documents');
+    $nestedFolder = createProjectItemWithGrant($project, $member, 'folder', ResourceGrants::READ, 'nested');
+    $nestedFolder->update(['parent_id' => $folder->id]);
+    $readableFile = createProjectItemWithGrant($project, $member, 'file', ResourceGrants::READ, 'readable.txt');
+    $readableFile->update([
+        'parent_id' => $nestedFolder->id,
+        'storage_backend' => 'local',
+        'storage_ref' => 'projects/'.$project->id.'/readable.txt',
+    ]);
+    storeEncryptedTeamProjectTestFile($readableFile, 'readable contents');
+    $unreadableFile = createProjectItemWithGrant($project, $member, 'file', ResourceGrants::WRITE, 'private.txt');
+    $unreadableFile->update([
+        'parent_id' => $folder->id,
+        'storage_backend' => 'local',
+        'storage_ref' => 'projects/'.$project->id.'/private.txt',
+    ]);
+    storeEncryptedTeamProjectTestFile($unreadableFile, 'private contents');
+
+    $response = $this->actingAs($member)->get(
+        route('projects.items.download', [$team, $project, $folder]),
+    );
+
+    $response->assertOk()->assertDownload('documents.zip');
+    $archivePath = tempnam(sys_get_temp_dir(), 'teamate-test-archive-');
+
+    if ($archivePath === false) {
+        throw new RuntimeException('Unable to create a temporary archive for the test.');
+    }
+
+    $archiveContent = $response->streamedContent();
+    expect(file_put_contents($archivePath, $archiveContent))->toBe(strlen($archiveContent));
+
+    $archive = new ZipArchive;
+
+    try {
+        expect($archive->open($archivePath))->toBeTrue();
+        expect($archive->getFromName('documents/nested/readable.txt'))->toBe('readable contents');
+        expect($archive->locateName('documents/private.txt'))->toBeFalse();
+    } finally {
+        $archive->close();
+        unlink($archivePath);
+    }
 });

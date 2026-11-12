@@ -9,7 +9,7 @@
             uploadTrayMinimized: false,
             uploads: [],
             folderId: {{ $currentFolder ? $currentFolder->id : 'null' }},
-            uploadUrl: '{{ route('projects.upload', [$team, $project]) }}',
+            uploadUrl: '{{ route('projects.upload', [$team, $project], false) }}',
             csrf: '{{ csrf_token() }}',
 
             openRename(id, name) {
@@ -60,10 +60,13 @@
                 });
             },
 
-            startUpload(file, uploadItem) {
+            startUpload(file, uploadItem, malwareConfirmation = null) {
                 const formData = new FormData();
                 formData.append('file', file);
                 formData.append('_token', this.csrf);
+                if (malwareConfirmation) {
+                    formData.append('malware_confirmation', malwareConfirmation);
+                }
                 if (this.folderId) {
                     formData.append('parent_id', this.folderId);
                 }
@@ -74,6 +77,7 @@
                 const xhr = new XMLHttpRequest();
                 xhr.open('POST', this.uploadUrl, true);
                 xhr.setRequestHeader('Accept', 'application/json');
+                xhr.timeout = 120000;
 
                 xhr.upload.onprogress = (e) => {
                     if (e.lengthComputable) {
@@ -91,19 +95,52 @@
                             setTimeout(() => { window.location.reload(); }, 900);
                         }
                     } else {
-                        uploadItem.status = 'error';
+                        let res;
                         try {
-                            const res = JSON.parse(xhr.responseText);
-                            uploadItem.errorMsg = res.message || (res.errors ? Object.values(res.errors)[0][0] : 'Upload failed');
+                            res = JSON.parse(xhr.responseText);
                         } catch (err) {
-                            uploadItem.errorMsg = 'Upload failed with status ' + xhr.status;
+                            res = {};
                         }
+
+                        if (res.malware_detected && res.confirmation_token) {
+                            const accepted = window.confirm(
+                                `ClamAV detected ${res.signature} in ${file.name}. Uploading this file may harm other users. Do you want to upload it anyway?`
+                            );
+
+                            if (accepted) {
+                                uploadItem.progress = 0;
+                                this.startUpload(file, uploadItem, res.confirmation_token);
+                            } else {
+                                uploadItem.status = 'cancelled';
+                                uploadItem.errorMsg = `Upload cancelled. ClamAV detected ${res.signature}.`;
+                            }
+
+                            return;
+                        }
+
+                        uploadItem.status = 'error';
+                        uploadItem.errorMsg = res.message || (res.errors ? Object.values(res.errors)[0][0] : 'Upload failed with status ' + xhr.status);
                     }
                 };
 
-                xhr.onerror = () => {
+                xhr.onerror = (event) => {
                     uploadItem.status = 'error';
-                    uploadItem.errorMsg = 'Network error during upload.';
+                    uploadItem.errorMsg = 'The connection was interrupted before the server responded. Check your connection and try again.';
+                    console.error('Project file upload network error', {
+                        event,
+                        url: this.uploadUrl,
+                        fileSize: file.size,
+                    });
+                };
+
+                xhr.ontimeout = () => {
+                    uploadItem.status = 'error';
+                    uploadItem.errorMsg = 'The upload took too long and timed out. Please try again.';
+                };
+
+                xhr.onabort = () => {
+                    uploadItem.status = 'error';
+                    uploadItem.errorMsg = 'The upload was interrupted. Please try again.';
                 };
 
                 xhr.send(formData);
@@ -112,7 +149,7 @@
         class="flex flex-col gap-6 w-full"
     >
         <!-- Hidden HTML File & Folder Inputs -->
-        @if ($canEdit)
+        @if ($canWriteCurrentFolder)
             <input
                 type="file"
                 x-ref="fileInput"
@@ -167,29 +204,48 @@
             </div>
 
             <!-- Action buttons: shown ONLY to users with Edit permission or higher -->
-            @if ($canEdit)
+            @if ($canEdit || $canOwn)
                 <div class="flex items-center gap-2.5 shrink-0">
-                    <button
-                        type="button"
-                        @click="newFolderModalOpen = true"
-                        class="inline-flex items-center gap-1.5 rounded-xl border border-slate-300 bg-white px-3.5 py-2 text-sm font-semibold text-slate-700 shadow-2xs hover:bg-slate-50 dark:border-neutral-700 dark:bg-neutral-800 dark:text-neutral-200 dark:hover:bg-neutral-700 transition"
-                    >
-                        <svg class="size-4 text-slate-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-                            <path stroke-linecap="round" stroke-linejoin="round" d="M9 13h6m-3-3v6m-9 1V7a2 2 0 012-2h6l2 2h6a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2z" />
-                        </svg>
-                        {{ __('New folder') }}
-                    </button>
+                    @if ($canOwn)
+                        <a
+                            href="{{ route('projects.members.index', [$team, $project]) }}"
+                            class="rounded-xl border border-slate-300 px-3.5 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 dark:border-neutral-700 dark:text-neutral-200 dark:hover:bg-neutral-800"
+                            wire:navigate
+                        >
+                            {{ __('Manage members') }}
+                        </a>
+                        <a
+                            href="{{ route('projects.roles.index', [$team, $project]) }}"
+                            class="rounded-xl border border-slate-300 px-3.5 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 dark:border-neutral-700 dark:text-neutral-200 dark:hover:bg-neutral-800"
+                            wire:navigate
+                        >
+                            {{ __('Manage roles') }}
+                        </a>
+                    @endif
 
-                    <button
-                        type="button"
-                        @click="triggerFileInput()"
-                        class="inline-flex items-center gap-1.5 rounded-xl bg-emerald-600 px-4 py-2 text-sm font-semibold text-white shadow-xs hover:bg-emerald-700 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-600 transition"
-                    >
-                        <svg class="size-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.2">
-                            <path stroke-linecap="round" stroke-linejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
-                        </svg>
-                        {{ __('Upload files') }}
-                    </button>
+                    @if ($canWriteCurrentFolder)
+                        <button
+                            type="button"
+                            @click="newFolderModalOpen = true"
+                            class="inline-flex items-center gap-1.5 rounded-xl border border-slate-300 bg-white px-3.5 py-2 text-sm font-semibold text-slate-700 shadow-2xs hover:bg-slate-50 dark:border-neutral-700 dark:bg-neutral-800 dark:text-neutral-200 dark:hover:bg-neutral-700 transition"
+                        >
+                            <svg class="size-4 text-slate-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                                <path stroke-linecap="round" stroke-linejoin="round" d="M9 13h6m-3-3v6m-9 1V7a2 2 0 012-2h6l2 2h6a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2z" />
+                            </svg>
+                            {{ __('New folder') }}
+                        </button>
+
+                        <button
+                            type="button"
+                            @click="triggerFileInput()"
+                            class="inline-flex items-center gap-1.5 rounded-xl bg-emerald-600 px-4 py-2 text-sm font-semibold text-white shadow-xs hover:bg-emerald-700 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-600 transition"
+                        >
+                            <svg class="size-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.2">
+                                <path stroke-linecap="round" stroke-linejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
+                            </svg>
+                            {{ __('Upload files') }}
+                        </button>
+                    @endif
                 </div>
             @endif
         </div>
@@ -226,7 +282,7 @@
         <!-- Content Area: Empty State OR Items Table -->
         @if ($items->isEmpty())
             <!-- 5.3 DEFAULT STATE IS EMPTY -->
-            @if ($canEdit)
+            @if ($canWriteCurrentFolder)
                 <!-- Large Dashed-border Drop Zone for users with Edit permission -->
                 <div
                     @dragover.prevent="isDragging = true"
@@ -317,7 +373,7 @@
                                 <tr class="hover:bg-slate-50/60 dark:hover:bg-neutral-800/40 transition">
                                     <!-- Name Column with Folder or File Icon -->
                                     <td class="px-6 py-3.5 font-medium text-slate-900 dark:text-white">
-                                        @if ($item->isFolder())
+                                        @if ($item->isFolder() && in_array((int) $item->id, $readableItemIds, true))
                                             <a
                                                 href="{{ route('projects.show', [$team, $project]).'?folder='.$item->id }}"
                                                 class="flex items-center gap-3 hover:text-emerald-600 transition group"
@@ -332,12 +388,27 @@
                                             </a>
                                         @else
                                             <div class="flex items-center gap-3">
-                                                <div class="flex size-8 items-center justify-center rounded-lg bg-slate-100 text-slate-600 dark:bg-neutral-800 dark:text-neutral-300 shrink-0">
-                                                    <svg class="size-4.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-                                                        <path stroke-linecap="round" stroke-linejoin="round" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                                                    </svg>
+                                                <div @class([
+                                                    'flex size-8 items-center justify-center rounded-lg shrink-0',
+                                                    'bg-amber-50 text-amber-600 dark:bg-amber-950/60 dark:text-amber-400' => $item->isFolder(),
+                                                    'bg-slate-100 text-slate-600 dark:bg-neutral-800 dark:text-neutral-300' => $item->isFile(),
+                                                ])>
+                                                    @if ($item->isFolder())
+                                                        <svg class="size-4.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                                                            <path stroke-linecap="round" stroke-linejoin="round" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
+                                                        </svg>
+                                                    @else
+                                                        <svg class="size-4.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                                                            <path stroke-linecap="round" stroke-linejoin="round" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                                                        </svg>
+                                                    @endif
                                                 </div>
                                                 <span class="text-sm font-medium text-slate-800 dark:text-neutral-200">{{ $item->name }}</span>
+                                            </div>
+                                        @endif
+                                        @if ($item->scan_status === 'malware')
+                                            <div class="mt-1 text-xs font-semibold text-rose-700 dark:text-rose-400">
+                                                {{ __('Malware detected: :signature', ['signature' => $item->malware_signature]) }}
                                             </div>
                                         @endif
                                     </td>
@@ -383,7 +454,21 @@
                                                 x-transition:leave-end="opacity-0 scale-95"
                                                 class="absolute right-6 mt-1 w-36 origin-top-right rounded-xl border border-slate-200 bg-white py-1.5 shadow-lg z-30 text-left text-xs dark:border-neutral-800 dark:bg-neutral-900"
                                             >
-                                                @if ($item->isFile())
+                                                @if ($item->isFile() && in_array((int) $item->id, $readableItemIds, true))
+                                                    @if (in_array((int) $item->id, $previewableItemIds, true))
+                                                        <a
+                                                            href="{{ route('projects.items.preview', [$team, $project, $item]) }}"
+                                                            target="_blank"
+                                                            rel="noopener"
+                                                            class="flex items-center gap-2 px-3 py-2 text-slate-700 hover:bg-slate-50 dark:text-neutral-200 dark:hover:bg-neutral-800"
+                                                        >
+                                                            <svg class="size-3.5 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                                                                <path stroke-linecap="round" stroke-linejoin="round" d="M2.25 12s3.5-6.75 9.75-6.75S21.75 12 21.75 12 18.25 18.75 12 18.75 2.25 12 2.25 12z" />
+                                                                <circle cx="12" cy="12" r="3" />
+                                                            </svg>
+                                                            {{ __('View') }}
+                                                        </a>
+                                                    @endif
                                                     <a
                                                         href="{{ route('projects.items.download', [$team, $project, $item]) }}"
                                                         class="flex items-center gap-2 px-3 py-2 text-slate-700 hover:bg-slate-50 dark:text-neutral-200 dark:hover:bg-neutral-800"
@@ -393,10 +478,20 @@
                                                         </svg>
                                                         {{ __('Download') }}
                                                     </a>
+                                                @elseif ($item->isFolder() && in_array((int) $item->id, $readableItemIds, true))
+                                                    <a
+                                                        href="{{ route('projects.items.download', [$team, $project, $item]) }}"
+                                                        class="flex items-center gap-2 px-3 py-2 text-slate-700 hover:bg-slate-50 dark:text-neutral-200 dark:hover:bg-neutral-800"
+                                                    >
+                                                        <svg class="size-3.5 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                                                            <path stroke-linecap="round" stroke-linejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                                                        </svg>
+                                                        {{ __('Download as ZIP') }}
+                                                    </a>
                                                 @endif
 
-                                                <!-- Rename and Delete only visible with Edit permission -->
-                                                @if ($canEdit)
+                                                <!-- Rename and Delete require project and item write permission -->
+                                                @if ($canEdit && in_array((int) $item->id, $writableItemIds, true))
                                                     <button
                                                         type="button"
                                                         @click="menuOpen = false; openRename({{ $item->id }}, '{{ addslashes($item->name) }}')"
@@ -480,9 +575,10 @@
                                   :class="{
                                       'text-emerald-600': item.status === 'success',
                                       'text-rose-600': item.status === 'error',
+                                      'text-amber-600': item.status === 'cancelled',
                                       'text-slate-500': item.status === 'uploading'
                                   }"
-                                  x-text="item.status === 'success' ? 'Uploaded' : (item.status === 'error' ? 'Failed' : item.progress + '%')">
+                                  x-text="item.status === 'success' ? 'Uploaded' : (item.status === 'error' ? 'Failed' : (item.status === 'cancelled' ? 'Cancelled' : item.progress + '%'))">
                             </span>
                         </div>
 
@@ -493,15 +589,18 @@
                                 :class="{
                                     'bg-emerald-600': item.status === 'success',
                                     'bg-rose-500': item.status === 'error',
+                                    'bg-amber-500': item.status === 'cancelled',
                                     'bg-emerald-500': item.status === 'uploading'
                                 }"
                                 :style="'width: ' + item.progress + '%'"
                             ></div>
                         </div>
 
-                        <!-- Error Message if failed -->
-                        <template x-if="item.status === 'error' && item.errorMsg">
-                            <p class="mt-1 text-[10px] text-rose-600 leading-tight" x-text="item.errorMsg"></p>
+                        <!-- Error or cancellation message -->
+                        <template x-if="(item.status === 'error' || item.status === 'cancelled') && item.errorMsg">
+                            <p class="mt-1 text-[10px] leading-tight"
+                               :class="item.status === 'cancelled' ? 'text-amber-600' : 'text-rose-600'"
+                               x-text="item.errorMsg"></p>
                         </template>
                     </div>
                 </template>
@@ -509,7 +608,7 @@
         </div>
 
         <!-- 5.3 "New folder" Modal -->
-        @if ($canEdit)
+        @if ($canWriteCurrentFolder)
             <div
                 x-cloak
                 x-show="newFolderModalOpen"
@@ -650,4 +749,3 @@
         @endif
     </div>
 </x-layouts::app>
-
