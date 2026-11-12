@@ -22,11 +22,13 @@ return new class extends Migration
                 ->constrained('roles');
 
             $table->unsignedBigInteger('scope_id');
+            $table->string('scope_type', 20);
 
             $table->timestamps();
 
             $table->unique([
                 'user_id',
+                'scope_type',
                 'scope_id',
             ]);
         });

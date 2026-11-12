@@ -13,7 +13,19 @@ class Membership extends Model
         'user_id',
         'role_id',
         'scope_id',
+        'scope_type',
     ];
+
+    protected static function booted(): void
+    {
+        static::creating(function (Membership $membership): void {
+            if (! $membership->scope_type) {
+                $membership->scope_type = Roles::query()
+                    ->whereKey($membership->role_id)
+                    ->value('scope_type');
+            }
+        });
+    }
 
     // User được gán role
     /** @return BelongsTo<User, $this> */

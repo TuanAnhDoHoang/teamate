@@ -50,7 +50,7 @@ class Team extends Model
     public function memberships(): HasMany
     {
         return $this->hasMany(Membership::class, 'scope_id')
-            ->whereHas('role', fn ($query) => $query->where('scope_type', 'team'));
+            ->where('scope_type', 'team');
     }
 
     /** @return HasMany<Project, $this> */
@@ -146,10 +146,11 @@ class Team extends Model
         }
 
         $permissionMask = Membership::query()
-            ->where('user_id', $user->id)
-            ->where('scope_id', $this->id)
+            ->where('memberships.user_id', $user->id)
+            ->where('memberships.scope_id', $this->id)
+            ->where('memberships.scope_type', 'team')
             ->whereHas('role', function ($query) {
-                $query->where('scope_type', 'team')
+                $query->where('roles.scope_type', 'team')
                     ->where(function ($query) {
                         $query->where('team_id', $this->id)
                             ->orWhere(function ($query) {

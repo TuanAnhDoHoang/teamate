@@ -35,7 +35,9 @@ class TeamRoleController extends Controller
             ->values();
 
         $roles = $this->availableRoles($team)
-            ->withCount(['memberships' => fn (Builder $query) => $query->where('scope_id', $team->id)])
+            ->withCount(['memberships' => fn (Builder $query) => $query
+                ->where('scope_id', $team->id)
+                ->where('scope_type', 'team')])
             ->with([
                 'resourceGrants' => fn (Relation $relation) => $relation
                     ->where('resource_specific', $team->id)
@@ -100,6 +102,7 @@ class TeamRoleController extends Controller
                 ->where('team_id', $team->id)
                 ->whereIn('user_id', Membership::query()
                     ->where('scope_id', $team->id)
+                    ->where('scope_type', 'team')
                     ->where('role_id', $role->id)
                     ->select('user_id'))
                 ->update(['role' => $role->name]);
@@ -133,6 +136,7 @@ class TeamRoleController extends Controller
                 [
                     'user_id' => $member->user_id,
                     'scope_id' => $team->id,
+                    'scope_type' => 'team',
                 ],
                 [
                     'role_id' => $role->id,

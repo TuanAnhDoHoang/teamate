@@ -41,7 +41,7 @@ class Project extends Model
     public function memberships(): HasMany
     {
         return $this->hasMany(Membership::class, 'scope_id')
-            ->whereHas('role', fn ($query) => $query->where('scope_type', 'project'));
+            ->where('scope_type', 'project');
     }
 
     /** @return HasMany<ProjectMember, $this> */
@@ -79,8 +79,7 @@ class Project extends Model
 
     public function canUserRead(?User $user): bool
     {
-        return $this->team->canUserRead($user)
-            && $this->userHasProjectPermission($user, ResourceGrants::READ);
+        return $this->userHasProjectPermission($user, ResourceGrants::READ);
     }
 
     private function userHasProjectPermission(?User $user, int $permission): bool
@@ -100,6 +99,7 @@ class Project extends Model
         $permissionMask = Membership::query()
             ->where('memberships.user_id', $user->id)
             ->where('memberships.scope_id', $this->id)
+            ->where('memberships.scope_type', 'project')
             ->join('roles', 'roles.id', '=', 'memberships.role_id')
             ->join('resource_grants', 'resource_grants.role_id', '=', 'roles.id')
             ->where('roles.scope_type', 'project')

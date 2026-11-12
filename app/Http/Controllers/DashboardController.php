@@ -74,6 +74,7 @@ class DashboardController extends Controller
                 'user_id' => $user->id,
                 'role_id' => $role->id,
                 'scope_id' => $team->id,
+                'scope_type' => 'team',
             ]);
 
             // Grant resource to user's role

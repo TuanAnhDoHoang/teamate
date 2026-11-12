@@ -68,6 +68,7 @@ class TeamController extends Controller
             $memberMemberships = Membership::query()
                 ->with('role')
                 ->where('scope_id', $team->id)
+                ->where('scope_type', 'team')
                 ->get()
                 ->keyBy('user_id');
 
@@ -155,6 +156,7 @@ class TeamController extends Controller
                 'user_id' => $user->id,
                 'role_id' => $projectRole->id,
                 'scope_id' => $project->id,
+                'scope_type' => 'project',
             ]);
 
             ProjectMember::create([
@@ -213,6 +215,7 @@ class TeamController extends Controller
                 [
                     'user_id' => $member->id,
                     'scope_id' => $team->id,
+                    'scope_type' => 'team',
                 ],
                 [
                     'role_id' => $guestRole->id,
