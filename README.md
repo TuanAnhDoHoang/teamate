@@ -37,12 +37,12 @@ Các phạm vi (scope)
 - Team: Thường quản lý truy cập cấu hình member và project
 - Project: Thường quản lý truy cập cấu hình file và folder
 
-Các vai trò:
+Các vai trò (custom):
 
-- Nhóm quản trị: TeamAdministrator, ProjectAdministrator
+- Nhóm quản trị: Administrator, TeamAdministrator, ProjectAdministrator
 - Nhóm phát triển: Developer, Devop
 - Nhóm reviewer: Tester, Pentester
-- Nhóm khách hàng: Guest
+- Nhóm khách hàng: Guest (mặc định cho thành viên mới)
 
 1. Tính năng
 
@@ -52,18 +52,15 @@ Project được mã hóa khi truyền tải và lưu trữ
 
 Mọi người sử dụng quyền của mình trong việc tương tác với dự án
 
-1. Các tính năng phụ
+File được scanning trước khi upload
+
+2. Các tính năng phụ
 
 Đăng nhập cần xác thực MFA
 
-Duyệt viruss trước khi đưa dữ liệu lên lưu trữ (một số file chọn trước do giới hạn)
+Backup đến môi trường phi tập trung - Walrus (chưa triển khai)
 
-Hệ thống backup sẽ có 2 option
-
-- Đưa lên walrus (một không gian lưu trữ phi tập trung)
-- Đưa vào một nơi lưu trữ khác
-
-1. Phân quyền trong Teamate
+3. Phân quyền trong Teamate
 
 Công thức chung: <u>quyền</u> + <u>tài nguyên</u> trong <u>phạm vi</u>
 
@@ -98,6 +95,18 @@ Tương tự như các phần trên thì ta có luồng hoạt động:
 
 → Ta đã có Peter với role Project_A_Developer được quyền đọc và chỉnh sửa Thư mục .github, thư mục frontend và file docker-compose.yml trong dự án của nhóm mà anh ta tham gia
 
+
+Kịch bản:  Pentester thuê ngoài làm việc 7 ngày
+
+- TeamAdministrator add vào nhóm
+- ProjectAdministrator add vào project
+- ProjectAdministrator tạo ProjectRole là Project_A_Pentester
+- ProjectAdministrator với quyền sở hữu project sẽ cấp quyền đọc và chỉnh sửa cho các file/folder mà pentester cần và đưa vào Project_A_Pentester
+- Sau 7 ngày, thu hồi (hoặc xóa) Role Project_A_Pentester từ người pentest
+- Như vậy, người được thuê sẽ ở trong project nhưng không đọc/chỉnh sửa được bất cứ thứ gì
+- ProjectAdministrator xóa khỏi project hoặc TeamAdministrator xóa khỏi nhóm
+
+
 ## Chạy ứng dụng bằng Docker Compose
 
 Khởi chạy ứng dụng và MySQL:
@@ -124,15 +133,3 @@ docker compose exec -e XDG_CONFIG_HOME=/tmp app php artisan tinker --execute 'Us
 ```
 
 Sau đó truy cập ứng dụng tại [http://localhost:8000](http://localhost:8000).
-
-Kịch bản:  Pentester thuê ngoài làm việc 7 ngày
-
-- TeamAdministrator add vào nhóm
-- ProjectAdministrator add vào project
-- ProjectAdministrator tạo ProjectRole là Project_A_Pentester
-- ProjectAdministrator với quyền sở hữu project sẽ cấp quyền đọc và chỉnh sửa cho các file/folder mà pentester cần và đưa vào Project_A_Pentester
-- Sau 7 ngày, thu hồi (hoặc xóa) Role Project_A_Pentester từ người pentest
-- Như vậy, người được thuê sẽ ở trong project nhưng không đọc/chỉnh sửa được bất cứ thứ gì
-- ProjectAdministrator xóa khỏi project hoặc TeamAdministrator xóa khỏi nhóm
-
-Teamate – Database Schema Reference
