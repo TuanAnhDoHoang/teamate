@@ -120,6 +120,7 @@ services:
       - ./.env:/var/www/html/.env:ro
     environment:
       APP_ENV: testing
+      APP_KEY: ${APP_KEY:-}
       DB_CONNECTION: mysql
       DB_HOST: test-mysql
       DB_PORT: 3306
