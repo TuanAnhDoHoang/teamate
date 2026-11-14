@@ -127,6 +127,20 @@ Chạy database migrations và seed dữ liệu ban đầu:
 docker compose exec app php artisan migrate --seed
 ```
 
+## Chạy kiểm thử bằng Docker
+
+Chạy toàn bộ test suite bằng script:
+
+```bash
+./run_test.sh
+```
+
+Script build và chạy service `test-runner`, sau đó thực thi `php artisan test`. Compose tự khởi động các dịch vụ mà test cần: MySQL riêng (`test-mysql`), Vault và ClamAV. Database test là `teamate_test`, tách biệt với database ứng dụng.
+
+`test-runner` là image riêng có cài các Composer development dependencies cần cho PHPUnit/Pest; image `app` không chứa các dependencies này. Feature test dùng `RefreshDatabase`; `Tests\TestCase` bật `$seed = true`, nên Laravel chạy `DatabaseSeeder` khi làm mới database test. Seeder hiện tạo các resource type và role mặc định. Không cần chạy `db:seed` riêng trước test.
+
+Lần build đầu cần Docker truy cập được các registry và tài nguyên bên ngoài mà bước frontend build yêu cầu. Nếu test thất bại, script trả về mã lỗi để kết quả được báo đúng cho shell/CI.
+
 Auto-Approved Email trong môi trường docker
 ```bash
 docker compose exec -e XDG_CONFIG_HOME=/tmp app php artisan tinker --execute 'User::latest()->first()->markEmailAsVerified();'
