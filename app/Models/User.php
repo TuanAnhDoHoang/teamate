@@ -10,6 +10,7 @@ use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Database\Eloquent\Relations\Pivot;
 use Illuminate\Foundation\Auth\User as Authenticatable;
 use Illuminate\Notifications\Notifiable;
 use Illuminate\Support\Carbon;
@@ -65,11 +66,13 @@ class User extends Authenticatable implements MustVerifyEmail, PasskeyUser
             : $initials;
     }
 
+    /** @return HasMany<Team, $this> */
     public function ownedTeams(): HasMany
     {
         return $this->hasMany(Team::class, 'owner_id');
     }
 
+    /** @return BelongsToMany<Team, $this, Pivot, 'pivot'> */
     public function teams(): BelongsToMany
     {
         return $this->belongsToMany(Team::class, 'team_members')
@@ -77,6 +80,7 @@ class User extends Authenticatable implements MustVerifyEmail, PasskeyUser
             ->withTimestamps();
     }
 
+    /** @return Collection<int, Team> */
     public function allTeams(): Collection
     {
         return Team::where('owner_id', $this->id)

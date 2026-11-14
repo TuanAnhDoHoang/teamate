@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use Illuminate\Database\Eloquent\Factories\Factory;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
@@ -10,6 +11,7 @@ use Illuminate\Database\Eloquent\SoftDeletes;
 
 class Project extends Model
 {
+    /** @use HasFactory<Factory<static>> */
     use HasFactory, SoftDeletes;
 
     protected $table = 'projects';
@@ -50,6 +52,7 @@ class Project extends Model
         return $this->hasMany(ProjectMember::class);
     }
 
+    /** @return BelongsTo<User, $this> */
     public function owner(): BelongsTo
     {
         return $this->belongsTo(User::class, 'owner_id');
@@ -79,7 +82,8 @@ class Project extends Model
 
     public function canUserRead(?User $user): bool
     {
-        return $this->userHasProjectPermission($user, ResourceGrants::READ);
+        return $this->team?->canUserRead($user) === true
+            && $this->userHasProjectPermission($user, ResourceGrants::READ);
     }
 
     private function userHasProjectPermission(?User $user, int $permission): bool

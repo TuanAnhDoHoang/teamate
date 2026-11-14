@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use Illuminate\Database\Eloquent\Factories\Factory;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
@@ -10,6 +11,7 @@ use Illuminate\Database\Eloquent\SoftDeletes;
 
 class ProjectItem extends Model
 {
+    /** @use HasFactory<Factory<static>> */
     use HasFactory, SoftDeletes;
 
     protected $table = 'project_items';
@@ -44,31 +46,37 @@ class ProjectItem extends Model
         ];
     }
 
+    /** @return BelongsTo<Project, $this> */
     public function project(): BelongsTo
     {
         return $this->belongsTo(Project::class);
     }
 
+    /** @return BelongsTo<ProjectItem, $this> */
     public function parent(): BelongsTo
     {
         return $this->belongsTo(ProjectItem::class, 'parent_id');
     }
 
+    /** @return HasMany<ProjectItem, $this> */
     public function children(): HasMany
     {
         return $this->hasMany(ProjectItem::class, 'parent_id');
     }
 
+    /** @return BelongsTo<User, $this> */
     public function creator(): BelongsTo
     {
         return $this->belongsTo(User::class, 'created_by');
     }
 
+    /** @return BelongsTo<User, $this> */
     public function updater(): BelongsTo
     {
         return $this->belongsTo(User::class, 'updated_by');
     }
 
+    /** @return BelongsTo<User, $this> */
     public function malwareAcknowledgingUser(): BelongsTo
     {
         return $this->belongsTo(User::class, 'malware_acknowledged_by');
