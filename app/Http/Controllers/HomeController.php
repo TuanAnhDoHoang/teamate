@@ -151,4 +151,3 @@ class HomeController extends Controller
         return view('welcome', compact('features', 'roles', 'permissionTypes', 'resources', 'matrix', 'steps'));
     }
 }
-
