@@ -3,7 +3,7 @@
 1. Mô tả
 - Là một ứng dụng web quản lý dự án số dành cho  nhóm, an toàn mã nguồn lưu trữ và quản lý truy cập phân quyền hiệu quả.
 
-1. Công nghệ sử dụng
+2. Công nghệ sử dụng
 
 Sử dụng laravel là framework chính cùng với :
 
@@ -11,7 +11,7 @@ Sử dụng laravel là framework chính cùng với :
 - Harshicorp: quản lý vòng đời khóa cho mã hóa
 - Walrus: Lưu trữ phi tập trung (giải pháp đăng ký backup dự án)
 
-1. RBAC
+3. RBAC
 
 Ứng dụng có 3 quyền chính đối với tài nguyên
 
@@ -44,7 +44,7 @@ Các vai trò (custom):
 - Nhóm reviewer: Tester, Pentester
 - Nhóm khách hàng: Guest (mặc định cho thành viên mới)
 
-1. Tính năng
+4. Tính năng
 
 Team upload project lên ứng dụng web được lưu trữ trong mysql database
 
@@ -54,13 +54,13 @@ Mọi người sử dụng quyền của mình trong việc tương tác với d
 
 File được scanning trước khi upload
 
-2. Các tính năng phụ
+5. Các tính năng phụ
 
 Đăng nhập cần xác thực MFA
 
 Backup đến môi trường phi tập trung - Walrus (chưa triển khai)
 
-3. Phân quyền trong Teamate
+6. Phân quyền trong Teamate
 
 Công thức chung: <u>quyền</u> + <u>tài nguyên</u> trong <u>phạm vi</u>
 
@@ -109,41 +109,42 @@ Kịch bản:  Pentester thuê ngoài làm việc 7 ngày
 
 ## Chạy ứng dụng bằng Docker Compose
 
-Khởi chạy ứng dụng và MySQL:
-
+Khởi chạy ứng dụng (cần tắt MYSQL trên máy với):
 ```bash
-docker compose up -d --build
+sudo systemctl stop mysql
+echo "Service Mysql has stopped"
+sleep 2
+docker compose up --build
 ```
-
-Compose cũng khởi chạy Vault Transit và tự tạo khóa `teamate-files` để mã hóa nội dung file mới tải lên. File được mã hóa trước khi lưu; Vault giữ khóa mã hóa và ứng dụng cần Vault để tải xuống hoặc xem trước. Tên file/folder và metadata vẫn được lưu rõ trong database. Vault dev mode cùng root token mẫu chỉ dùng cho phát triển: dữ liệu và khóa Vault không bền vững qua lần tạo lại container, vì vậy không dùng cấu hình này cho production.
-
-Compose cũng chạy ClamAV trong mạng nội bộ, không mở cổng scanner ra máy host. File được quét trước khi mã hóa; nếu phát hiện malware, người tải lên có thể hủy hoặc xác nhận tiếp tục. File được chấp nhận sẽ vẫn được mã hóa và gắn cảnh báo kèm tên signature để thành viên khác nhìn thấy. Nếu ClamAV không sẵn sàng hoặc không thể hoàn tất việc quét, upload bị từ chối. Database signature được cập nhật tự động và lưu trong volume `clamav-data`.
-
-Các biến cấu hình tùy chọn là `CLAMAV_HOST`, `CLAMAV_PORT` và `CLAMAV_TIMEOUT` (mặc định lần lượt là `clamav`, `3310` và `60` giây). Giới hạn upload là 50 MB; ClamAV được cấu hình giới hạn INSTREAM cao hơn để nhận đủ file ở ngưỡng tối đa.
-
 Chạy database migrations và seed dữ liệu ban đầu:
 
 ```bash
 docker compose exec app php artisan migrate --seed
 ```
 
+Tài khoản demo (chỉ được tạo trong môi trường `local` hoặc `testing`):
+
+| Email | Mật khẩu ban đầu |
+|---|---|
+| `demo1@example.test` | `TeamateDemoOnly2026!` |
+| `demo2@example.test` | `TeamateDemoOnly2026!` |
+| `demo3@example.test` | `TeamateDemoOnly2026!` |
+
+Các tài khoản này đã xác minh email để tiện đăng nhập trong môi trường demo. Không dùng các thông tin đăng nhập này trên production hoặc môi trường công khai.
+
+## Truy cập Database 
+
+```bash
+docker compose exec mysql mysql -u teamate -p teamate
+```
+
 ## Chạy kiểm thử bằng Docker
-
-Chạy toàn bộ test suite bằng script:
-
 ```bash
-./run_test.sh
+#Run tests only
+bash run_test.sh
 ```
 
-Script build và chạy service `test-runner`, sau đó thực thi `php artisan test`. Compose tự khởi động các dịch vụ mà test cần: MySQL riêng (`test-mysql`), Vault và ClamAV. Database test là `teamate_test`, tách biệt với database ứng dụng.
-
-`test-runner` là image riêng có cài các Composer development dependencies cần cho PHPUnit/Pest; image `app` không chứa các dependencies này. Feature test dùng `RefreshDatabase`; `Tests\TestCase` bật `$seed = true`, nên Laravel chạy `DatabaseSeeder` khi làm mới database test. Seeder hiện tạo các resource type và role mặc định. Không cần chạy `db:seed` riêng trước test.
-
-Lần build đầu cần Docker truy cập được các registry và tài nguyên bên ngoài mà bước frontend build yêu cầu. Nếu test thất bại, script trả về mã lỗi để kết quả được báo đúng cho shell/CI.
-
-Auto-Approved Email trong môi trường docker
 ```bash
-docker compose exec -e XDG_CONFIG_HOME=/tmp app php artisan tinker --execute 'User::latest()->first()->markEmailAsVerified();'
+#Check format and run tests
+composer check:ci
 ```
-
-Sau đó truy cập ứng dụng tại [http://localhost:8000](http://localhost:8000).
