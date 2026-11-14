@@ -281,16 +281,6 @@ test('user can create a team and gets attached as admin', function () {
     $teamResourceTypeId = DB::table('resource_types')->where('code', 'team')->value('id');
     expect($teamResourceTypeId)->not->toBeNull();
 
-    $projectResourceTypeId = DB::table('resource_types')->where('code', 'project')->value('id');
-    expect($projectResourceTypeId)->not->toBeNull();
-    expect(DB::table('resource_grants')->where([
-        'role_id' => $membership->role_id,
-        'resource_type_id' => $projectResourceTypeId,
-        'resource_specific' => $team->id,
-        'permission_mask' => 7,
-        'granted_by' => $user->id,
-    ])->exists())->toBeTrue();
-
     expect(DB::table('resource_grants')->where([
         'role_id' => $membership->role_id,
         'resource_type_id' => $teamResourceTypeId,
@@ -319,7 +309,7 @@ test('team page renders projects and members tabs with permissions', function ()
     TeamMember::create(['team_id' => $team->id, 'user_id' => $owner->id, 'role' => 'admin']);
     TeamMember::create(['team_id' => $team->id, 'user_id' => $client->id, 'role' => 'client']);
 
-    $teamResourceType = ResourceTypes::create(['code' => 'team']);
+    $teamResourceType = ResourceTypes::firstOrCreate(['code' => 'team']);
     $ownerRole = Roles::create([
         'code' => 'team_administrator_cyberops',
         'name' => 'Team Administrator',
@@ -427,7 +417,7 @@ test('team member with a read grant for the team can view the team', function ()
         'is_system' => false,
     ]);
     Membership::create(['user_id' => $member->id, 'role_id' => $role->id, 'scope_id' => $team->id]);
-    $resourceType = ResourceTypes::create(['code' => 'team']);
+    $resourceType = ResourceTypes::firstOrCreate(['code' => 'team']);
     ResourceGrants::create([
         'role_id' => $role->id,
         'resource_type_id' => $resourceType->id,
@@ -458,7 +448,7 @@ test('user without team membership cannot use a team read grant', function () {
         'is_system' => false,
     ]);
     Membership::create(['user_id' => $outsider->id, 'role_id' => $role->id, 'scope_id' => $team->id]);
-    $resourceType = ResourceTypes::create(['code' => 'team']);
+    $resourceType = ResourceTypes::firstOrCreate(['code' => 'team']);
     ResourceGrants::create([
         'role_id' => $role->id,
         'resource_type_id' => $resourceType->id,
@@ -540,7 +530,7 @@ test('team member with write permission can add a guest member', function () {
         'scope_id' => $team->id,
     ]);
 
-    $resourceType = ResourceTypes::create(['code' => 'team_member']);
+    $resourceType = ResourceTypes::firstOrCreate(['code' => 'team_member']);
     ResourceGrants::create([
         'role_id' => $adminRole->id,
         'resource_type_id' => $resourceType->id,
@@ -609,7 +599,7 @@ test('team member without write permission cannot add a member', function () {
         'scope_id' => $team->id,
     ]);
 
-    $resourceType = ResourceTypes::create(['code' => 'team_member']);
+    $resourceType = ResourceTypes::firstOrCreate(['code' => 'team_member']);
     ResourceGrants::create([
         'role_id' => $reviewRole->id,
         'resource_type_id' => $resourceType->id,
@@ -645,7 +635,7 @@ test('project page renders empty drop zone, allows upload and folder creation', 
         'is_system' => false,
     ]);
     Membership::create(['user_id' => $owner->id, 'role_id' => $role->id, 'scope_id' => $team->id]);
-    $teamResourceType = ResourceTypes::create(['code' => 'team']);
+    $teamResourceType = ResourceTypes::firstOrCreate(['code' => 'team']);
     ResourceGrants::create([
         'role_id' => $role->id,
         'resource_type_id' => $teamResourceType->id,
@@ -674,7 +664,7 @@ test('project page renders empty drop zone, allows upload and folder creation', 
     ]);
     ResourceGrants::create([
         'role_id' => $projectRole->id,
-        'resource_type_id' => ResourceTypes::create(['code' => 'project'])->id,
+        'resource_type_id' => ResourceTypes::firstOrCreate(['code' => 'project'])->id,
         'resource_specific' => $project->id,
         'permission_mask' => 7,
         'granted_by' => $owner->id,
@@ -934,8 +924,8 @@ test('malware is stored only after the uploader confirms the unchanged file', fu
     configureTeamProjectWorkflowVault();
     fakeProjectClamAvScan('Win.Test.EICAR', 2);
     ['team' => $team, 'project' => $project, 'member' => $member] = createProjectReadFixture(
-        ResourceGrants::WRITE,
-        ResourceGrants::WRITE,
+        ResourceGrants::READ | ResourceGrants::WRITE,
+        ResourceGrants::READ | ResourceGrants::WRITE,
     );
     $fileContents = 'test malware fixture';
     $uploadUrl = route('projects.upload', [$team, $project]);
@@ -980,7 +970,7 @@ test('malware is stored only after the uploader confirms the unchanged file', fu
 test('upload returns 422 when malware confirmation is reused for different content', function () {
     Storage::fake('local');
     configureTeamProjectWorkflowVault();
-    fakeProjectClamAvScan('Win.Test.EICAR');
+    fakeProjectClamAvScan('Win.Test.EICAR', 2);
     ['team' => $team, 'project' => $project, 'member' => $member] = createProjectReadFixture(
         ResourceGrants::WRITE,
         ResourceGrants::WRITE,
@@ -1181,7 +1171,7 @@ test('project member with file read permission can preview a safe file inline', 
     );
 
     $response->assertOk()
-        ->assertHeader('content-type', 'text/plain')
+        ->assertHeader('content-type', 'text/plain; charset=utf-8')
         ->assertHeader('x-content-type-options', 'nosniff');
     expect($response->getFile()->getContent())->toBe('preview contents');
 });

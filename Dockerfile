@@ -40,3 +40,10 @@ USER www-data
 EXPOSE 8000
 
 CMD ["php", "artisan", "serve", "--host=0.0.0.0", "--port=8000"]
+
+FROM php-app AS test-runner
+
+RUN composer install --no-interaction --prefer-dist --no-progress --no-scripts \
+   && composer dump-autoload --no-interaction
+
+COPY --from=frontend /app/public/build ./public/build

@@ -184,12 +184,16 @@ test('team member writer can assign a role without checking the role resource pe
         'user_id' => $memberUser->id,
         'role' => 'Guest',
     ]);
-    $guestRole = Roles::create([
-        'code' => 'guest',
-        'name' => 'Guest',
-        'scope_type' => 'team',
-        'is_system' => true,
-    ]);
+    $guestRole = Roles::firstOrCreate(
+        [
+            'code' => 'guest',
+            'scope_type' => 'team',
+        ],
+        [
+            'name' => 'Guest',
+            'is_system' => true,
+        ],
+    );
     Membership::create([
         'user_id' => $memberUser->id,
         'role_id' => $guestRole->id,

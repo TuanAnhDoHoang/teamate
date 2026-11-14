@@ -7,4 +7,5 @@
 .phpunit.result.cache
 /node_modules
 /public/build
+/storage/framework/views/*
 /vendor
