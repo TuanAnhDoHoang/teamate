@@ -64,12 +64,19 @@
         ],
         "ci:check": [
             "Composer\\Config::disableProcessTimeout",
-            "@test"
+            "docker compose --profile test run --build --rm test-runner composer ci:check:in-runner"
+        ],
+        "ci:check:in-runner": [
+            "Composer\\Config::disableProcessTimeout",
+            "@test:in-runner"
         ],
         "types:check": [
-            "phpstan analyse"
+            "phpstan analyse --memory-limit=512M"
         ],
         "test": [
+            "docker compose --profile test run --build --rm test-runner composer test:in-runner"
+        ],
+        "test:in-runner": [
             "@php artisan config:clear --ansi",
             "@lint:check",
             "@types:check",
