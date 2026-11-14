@@ -2,6 +2,7 @@ services:
   app:
     build:
       context: .
+      target: app
     environment:
       APP_ENV: ${APP_ENV:-local}
       APP_DEBUG: ${APP_DEBUG:-true}
@@ -20,8 +21,6 @@ services:
       CLAMAV_HOST: ${CLAMAV_HOST:-clamav}
       CLAMAV_PORT: ${CLAMAV_PORT:-3310}
       CLAMAV_TIMEOUT: ${CLAMAV_TIMEOUT:-60}
-    env_file:
-      - .env
     ports:
       - "${APP_PORT:-8000}:8000"
     depends_on:
@@ -95,6 +94,7 @@ services:
       retries: 10
 
   test-mysql:
+    profiles: ["test"]
     image: mysql:8.4
     environment:
       MYSQL_DATABASE: teamate_test
